@@ -8,6 +8,15 @@ local timer = nil
 local start_time = nil
 local total_timetable = {}
 local total_time = 0
+local data_file = vim.fn.stdpath("data") .. "/timekeeper.json"
+
+local function save_data()
+	local file = io.open(data_file, "w")
+	if file then
+		file:write(vim.json.encode(total_timetable))
+		file:close()
+	end
+end
 
 local function save_time()
 	if start_time then
@@ -15,6 +24,7 @@ local function save_time()
 		total_time = total_time + 60
 		total_timetable[filename] = total_time
 		local time_table = M.format_time(total_time)
+		save_data()
 		print(
 			string.format(
 				"Total time: %dh %dm %ds",
@@ -26,9 +36,21 @@ local function save_time()
 	end
 end
 
+local function load_data()
+	local file = io.open(data_file, "r")
+	if file then
+		local content = file:read("*all")
+		file:close()
+		if content and content ~= "" then
+			total_timetable = vim.json.decode(content) or {}
+		end
+	end
+end
+
 function M.start_tracking()
 	local filename = vim.api.nvim_buf_get_name(0)
 	start_time = os.time()
+	load_data()
 	if total_timetable[filename] then
 		total_time = total_timetable[filename]
 	else
