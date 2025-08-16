@@ -11,11 +11,16 @@ local total_time = 0
 local data_file = vim.fn.stdpath("data") .. "/timekeeper.json"
 
 local function save_data()
-	local file = io.open(data_file, "w")
-	if file then
-		file:write(vim.json.encode(total_timetable))
-		file:close()
-	end
+	local content = vim.json.encode(total_timetable)
+	vim.uv.fs_open(data_file, "w", 438, function(err, fd)
+		if err or not fd then
+			return
+		end
+
+		vim.uv.fs_write(fd, content, 0, function(err)
+			vim.uv.fs_close(fd, function() end)
+		end)
+	end)
 end
 
 local function save_time()
@@ -36,15 +41,44 @@ local function save_time()
 	end
 end
 
-local function load_data()
-	local file = io.open(data_file, "r")
-	if file then
-		local content = file:read("*all")
-		file:close()
-		if content and content ~= "" then
-			total_timetable = vim.json.decode(content) or {}
+local function load_data(callback)
+	vim.uv.fs_open(data_file, "r", 438, function(err, fd)
+		if err or not fd then
+			if callback then
+				callback({})
+			end
+			return
 		end
-	end
+
+		vim.uv.fs_fstat(fd, function(err, stat)
+			if err or not stat then
+				vim.uv.fs_close(fd, function() end)
+				if callback then
+					callback({})
+				end
+				return
+			end
+
+			vim.uv.fs_read(fd, stat.size, 0, function(err, content)
+				vim.uv.fs_close(fd, function() end)
+				if err or not content then
+					if callback then
+						callback({})
+					end
+					return
+				end
+
+				local data = {}
+				if content and content ~= "" then
+					local ok, decoded = pcall(vim.json.decode, content)
+					data = ok and decoded or {}
+				end
+				if callback then
+					callback(data)
+				end
+			end)
+		end)
+	end)
 end
 
 function M.start_tracking()
