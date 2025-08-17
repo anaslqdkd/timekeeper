@@ -1,4 +1,26 @@
 local M = {}
+package.cpath = package.cpath
+	.. ";/nix/store/pb55r4xamynlf4n4k15qfxzggm0vx2lc-lua5.2-luasql-sqlite3-2.7.0-1/lib/lua/5.2/?.so"
+local sqlite3 = require("luasql.sqlite3")
+local env = sqlite3.sqlite3()
+local conn = env:connect("test.db")
+conn:execute([[
+ CREATE TABLE IF NOT EXISTS users (
+   id INTEGER PRIMARY KEY,
+   name TEXT
+ );
+]])
+conn:execute("INSERT INTO users (name) VALUES ('Alice');")
+local cur = conn:execute("SELECT * FROM users;")
+local row = cur:fetch({}, "a")
+while row do
+	print(row.id, row.name)
+	row = cur:fetch(row, "a")
+end
+
+cur:close()
+conn:close()
+env:close()
 
 function M.setup(opts)
 	opts = opts or {}
@@ -84,20 +106,24 @@ end
 function M.start_tracking()
 	local filename = vim.api.nvim_buf_get_name(0)
 	start_time = os.time()
-	load_data()
-	if total_timetable[filename] then
-		total_time = total_timetable[filename]
-	else
-		total_time = 0
-	end
-	print("Started tracking: " .. filename)
-	if timer then
-		timer:stop()
-		timer:close()
-	end
-	timer = vim.uv.new_timer()
-	timer:start(60000, 60000, vim.schedule_wrap(save_time))
+	load_data(function(data)
+		total_timetable = data
+		print(vim.inspect(total_timetable))
+		if total_timetable[filename] then
+			total_time = total_timetable[filename]
+		else
+			total_time = 0
+		end
+		print("Started tracking: " .. filename)
+		if timer then
+			timer:stop()
+			timer:close()
+		end
+		timer = vim.uv.new_timer()
+		timer:start(10000, 10000, vim.schedule_wrap(save_time))
+	end)
 end
+-- TODO: add events to call the stop tracking function
 
 function M.format_time(seconds)
 	local time = {}
@@ -122,4 +148,11 @@ end
 vim.api.nvim_create_user_command("Ta", M.start_tracking, {})
 vim.api.nvim_create_user_command("Tb", M.stop_tracking, {})
 
+vim.api.nvim_create_autocmd("BufLeave", {
+	callback = function()
+		M.stop_tracking()
+	end,
+})
+
+-- require(something) gives the M table
 return M

@@ -26,7 +26,16 @@
             pkgs.lua
             pkgs.stylua
             pkgs.git
+			pkgs.lua52Packages.luarocks
+			pkgs.lua52Packages.luarocks-nix
+			pkgs.lua52Packages.luarocks_bootstrap
+			pkgs.gcc
+			pkgs.unzip
+			pkgs.cmake
+			pkgs.pkg-config
             testNeovim
+			nixpkgs.legacyPackages.x86_64-linux.lua52Packages.luasql-sqlite3
+			nixpkgs.legacyPackages.x86_64-linux.lua51Packages.luasql-sqlite3
           ];
 		  SHELL = "${pkgs.zsh}/bin/zsh";
           shellHook = ''
