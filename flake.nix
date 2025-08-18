@@ -33,6 +33,7 @@
 			pkgs.unzip
 			pkgs.cmake
 			pkgs.pkg-config
+			pkgs.sqlitebrowser
             testNeovim
 			nixpkgs.legacyPackages.x86_64-linux.lua52Packages.luasql-sqlite3
 			nixpkgs.legacyPackages.x86_64-linux.lua51Packages.luasql-sqlite3

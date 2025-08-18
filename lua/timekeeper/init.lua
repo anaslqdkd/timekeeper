@@ -3,24 +3,8 @@ package.cpath = package.cpath
 	.. ";/nix/store/pb55r4xamynlf4n4k15qfxzggm0vx2lc-lua5.2-luasql-sqlite3-2.7.0-1/lib/lua/5.2/?.so"
 local sqlite3 = require("luasql.sqlite3")
 local env = sqlite3.sqlite3()
-local conn = env:connect("test.db")
-conn:execute([[
- CREATE TABLE IF NOT EXISTS users (
-   id INTEGER PRIMARY KEY,
-   name TEXT
- );
-]])
-conn:execute("INSERT INTO users (name) VALUES ('Alice');")
-local cur = conn:execute("SELECT * FROM users;")
-local row = cur:fetch({}, "a")
-while row do
-	print(row.id, row.name)
-	row = cur:fetch(row, "a")
-end
-
-cur:close()
-conn:close()
-env:close()
+local db_path = "test.db"
+local conn = nil
 
 function M.setup(opts)
 	opts = opts or {}
@@ -30,19 +14,21 @@ local timer = nil
 local start_time = nil
 local total_timetable = {}
 local total_time = 0
-local data_file = vim.fn.stdpath("data") .. "/timekeeper.json"
 
-local function save_data()
-	local content = vim.json.encode(total_timetable)
-	vim.uv.fs_open(data_file, "w", 438, function(err, fd)
-		if err or not fd then
-			return
-		end
-
-		vim.uv.fs_write(fd, content, 0, function(err)
-			vim.uv.fs_close(fd, function() end)
-		end)
-	end)
+function M.load_data_db(filename)
+	conn = env:connect(db_path)
+	local query = string.format("select total_time from timetable where filename = '%s';", filename)
+	local curr = conn:execute(query)
+	local row_ = curr:fetch({}, "a")
+	local res = 0
+	if row_ then
+		print("Data base loaded with total time:", row_.total_time)
+		res = row_.total_time
+	else
+		print("No entry for", filename)
+	end
+	curr:close()
+	return res
 end
 
 local function save_time()
@@ -63,65 +49,66 @@ local function save_time()
 	end
 end
 
-local function load_data(callback)
-	vim.uv.fs_open(data_file, "r", 438, function(err, fd)
-		if err or not fd then
-			if callback then
-				callback({})
-			end
-			return
-		end
+function M.save_data_db(filename, time)
+	local time_from_db = M.load_data_db(filename)
+	local time_passed = time_from_db + 10
+	local query = string.format(
+		[[
+	  INSERT INTO timetable (filename, total_time)
+	  VALUES ('%s', %d)
+	  ON CONFLICT(filename) DO UPDATE SET total_time = excluded.total_time;
+		]],
+		filename,
+		time_passed
+	)
+	if conn then
+		local curr = conn:execute(query)
+		print("Saving to database", time_passed)
+	end
+	-- conn:close()
+	-- env:close()
+end
 
-		vim.uv.fs_fstat(fd, function(err, stat)
-			if err or not stat then
-				vim.uv.fs_close(fd, function() end)
-				if callback then
-					callback({})
-				end
-				return
-			end
+function M.print_db()
+	local cur = conn:execute("SELECT * FROM timetable;")
+	local row = cur:fetch({}, "a")
+	while row do
+		print(row.filename, row.total_time)
+		row = cur:fetch(row, "a")
+	end
 
-			vim.uv.fs_read(fd, stat.size, 0, function(err, content)
-				vim.uv.fs_close(fd, function() end)
-				if err or not content then
-					if callback then
-						callback({})
-					end
-					return
-				end
-
-				local data = {}
-				if content and content ~= "" then
-					local ok, decoded = pcall(vim.json.decode, content)
-					data = ok and decoded or {}
-				end
-				if callback then
-					callback(data)
-				end
-			end)
-		end)
-	end)
+	cur:close()
+	conn:close()
+	env:close()
 end
 
 function M.start_tracking()
+	-- TODO: have a variable called session_time, but it will be rewritten?
 	local filename = vim.api.nvim_buf_get_name(0)
 	start_time = os.time()
-	load_data(function(data)
-		total_timetable = data
-		print(vim.inspect(total_timetable))
-		if total_timetable[filename] then
-			total_time = total_timetable[filename]
-		else
-			total_time = 0
-		end
-		print("Started tracking: " .. filename)
-		if timer then
-			timer:stop()
-			timer:close()
-		end
-		timer = vim.uv.new_timer()
-		timer:start(10000, 10000, vim.schedule_wrap(save_time))
-	end)
+	M.load_data_db(filename)
+
+	-- 	load_data(function(data)
+	-- 		total_timetable = data
+	-- 		print(vim.inspect(total_timetable))
+	-- 		if total_timetable[filename] then
+	-- 			total_time = total_timetable[filename]
+	-- 		else
+	-- 			total_time = 0
+	-- 		end
+	print("Started tracking: " .. filename)
+	if timer then
+		timer:stop()
+		timer:close()
+	end
+	timer = vim.uv.new_timer()
+	timer:start(
+		10000,
+		10000,
+		vim.schedule_wrap(function()
+			M.save_data_db(filename, 10)
+		end)
+	)
 end
 -- TODO: add events to call the stop tracking function
 
@@ -143,6 +130,10 @@ function M.stop_tracking()
 	end
 	start_time = nil
 	total_time = 0
+	if conn then
+		conn:close()
+	end
+	env:close()
 end
 
 vim.api.nvim_create_user_command("Ta", M.start_tracking, {})
