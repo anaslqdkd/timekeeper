@@ -2,19 +2,18 @@ local M = {}
 package.cpath = package.cpath
 	.. ";/nix/store/pb55r4xamynlf4n4k15qfxzggm0vx2lc-lua5.2-luasql-sqlite3-2.7.0-1/lib/lua/5.2/?.so"
 local sqlite3 = require("luasql.sqlite3")
-local env = sqlite3.sqlite3()
-local db_path = "test.db"
+local env = nil
 local conn = nil
+local db_path = "test.db"
 
 function M.setup(opts)
 	opts = opts or {}
 end
 
 local timer = nil
-local start_time = nil
 local total_timetable = {}
-local total_time = 0
 
+-- returns the total time from the database
 function M.load_data_db(filename)
 	conn = env:connect(db_path)
 	local query = string.format("select total_time from timetable where filename = '%s';", filename)
@@ -31,25 +30,8 @@ function M.load_data_db(filename)
 	return res
 end
 
-local function save_time()
-	if start_time then
-		local filename = vim.api.nvim_buf_get_name(0)
-		total_time = total_time + 60
-		total_timetable[filename] = total_time
-		local time_table = M.format_time(total_time)
-		save_data()
-		print(
-			string.format(
-				"Total time: %dh %dm %ds",
-				time_table.total_hours,
-				time_table.total_minutes,
-				time_table.remaining_seconds
-			)
-		)
-	end
-end
-
-function M.save_data_db(filename, time)
+-- saves total_time to the database
+function M.save_data_db(filename)
 	local time_from_db = M.load_data_db(filename)
 	local time_passed = time_from_db + 10
 	local query = string.format(
@@ -62,40 +44,20 @@ function M.save_data_db(filename, time)
 		time_passed
 	)
 	if conn then
-		local curr = conn:execute(query)
+		conn:execute(query)
 		print("Saving to database", time_passed)
 	end
-	-- conn:close()
-	-- env:close()
-end
-
-function M.print_db()
-	local cur = conn:execute("SELECT * FROM timetable;")
-	local row = cur:fetch({}, "a")
-	while row do
-		print(row.filename, row.total_time)
-		row = cur:fetch(row, "a")
-	end
-
-	cur:close()
-	conn:close()
-	env:close()
 end
 
 function M.start_tracking()
 	-- TODO: have a variable called session_time, but it will be rewritten?
 	local filename = vim.api.nvim_buf_get_name(0)
-	start_time = os.time()
-	M.load_data_db(filename)
+	if filename == "" then
+		return
+	end
+	env = sqlite3.sqlite3()
+	conn = env:connect(db_path)
 
-	-- 	load_data(function(data)
-	-- 		total_timetable = data
-	-- 		print(vim.inspect(total_timetable))
-	-- 		if total_timetable[filename] then
-	-- 			total_time = total_timetable[filename]
-	-- 		else
-	-- 			total_time = 0
-	-- 		end
 	print("Started tracking: " .. filename)
 	if timer then
 		timer:stop()
@@ -106,7 +68,7 @@ function M.start_tracking()
 		10000,
 		10000,
 		vim.schedule_wrap(function()
-			M.save_data_db(filename, 10)
+			M.save_data_db(filename)
 		end)
 	)
 end
@@ -125,15 +87,14 @@ function M.stop_tracking()
 		timer:stop()
 		timer:close()
 		timer = nil
-		local time = M.format_time(total_time)
-		print("Stopped tracking", print(time.total_hours, time.total_minutes, time.remaining_seconds))
+		print("Stopped tracking")
 	end
-	start_time = nil
-	total_time = 0
 	if conn then
 		conn:close()
 	end
-	env:close()
+	if env then
+		env:close()
+	end
 end
 
 vim.api.nvim_create_user_command("Ta", M.start_tracking, {})
@@ -142,6 +103,11 @@ vim.api.nvim_create_user_command("Tb", M.stop_tracking, {})
 vim.api.nvim_create_autocmd("BufLeave", {
 	callback = function()
 		M.stop_tracking()
+	end,
+})
+vim.api.nvim_create_autocmd("BufEnter", {
+	callback = function()
+		M.start_tracking()
 	end,
 })
 
