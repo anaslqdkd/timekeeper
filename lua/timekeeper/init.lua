@@ -12,6 +12,25 @@ end
 
 local timer = nil
 local total_timetable = {}
+local inactivity_timer = nil
+local inactivity_limit = 20000
+local saving_interval = 10000
+local idle_mode = false
+-- TODO: add saving current date for statistics
+
+local function find_project(filename) end
+local function turn_idle_mode()
+	print("the idle mode was turned on")
+	idle_mode = true
+end
+local function reset_inactivity_timer()
+	print("The inactivity_timer was reset")
+	if inactivity_timer then
+		inactivity_timer:stop()
+		inactivity_timer:start(inactivity_limit, 0, vim.schedule_wrap(turn_idle_mode))
+		idle_mode = false
+	end
+end
 
 -- returns the total time from the database
 function M.load_data_db(filename)
@@ -32,8 +51,9 @@ end
 
 -- saves total_time to the database
 function M.save_data_db(filename)
+	print("in the save db function")
 	local time_from_db = M.load_data_db(filename)
-	local time_passed = time_from_db + 10
+	local time_passed = time_from_db + (saving_interval / 1000) -- in seconds
 	local query = string.format(
 		[[
 	  INSERT INTO timetable (filename, total_time)
@@ -44,13 +64,16 @@ function M.save_data_db(filename)
 		time_passed
 	)
 	if conn then
-		conn:execute(query)
-		print("Saving to database", time_passed)
+		if not idle_mode then
+			conn:execute(query)
+			print("Saving to database", time_passed)
+		else
+			print("Cannot save, idle mode")
+		end
 	end
 end
 
 function M.start_tracking()
-	-- TODO: have a variable called session_time, but it will be rewritten?
 	local filename = vim.api.nvim_buf_get_name(0)
 	if filename == "" then
 		return
@@ -65,20 +88,27 @@ function M.start_tracking()
 	end
 	timer = vim.uv.new_timer()
 	timer:start(
-		10000,
-		10000,
+		saving_interval,
+		saving_interval,
 		vim.schedule_wrap(function()
 			M.save_data_db(filename)
 		end)
 	)
+	inactivity_timer = vim.loop.new_timer()
+	inactivity_timer:start(
+		inactivity_limit,
+		0,
+		vim.schedule_wrap(function()
+			turn_idle_mode()
+		end)
+	)
 end
--- TODO: add events to call the stop tracking function
 
 function M.format_time(seconds)
 	local time = {}
-	time.total_minutes = math.floor(seconds / 60)
-	time.total_hours = math.floor(time.total_minutes / 60)
-	time.remaining_seconds = time.total_minutes % 60
+	time.total_hours = math.floor(seconds / 3600)
+	time.total_minutes = math.floor((seconds - (time.total_hours * 3600)) / 60)
+	time.total_seconds = seconds - (time.total_hours * 3600 + time.total_minutes * 60)
 	return time
 end
 
@@ -97,8 +127,76 @@ function M.stop_tracking()
 	end
 end
 
+local function get_db_content()
+	local query = string.format([[
+		select * from timetable
+		]])
+	env = sqlite3.sqlite3()
+	conn = env:connect(db_path)
+	local curr = conn:execute(query)
+	local row = curr:fetch({}, "a")
+	local res = {}
+	while row do
+		table.insert(res, { filename = row.filename, total_time = row.total_time })
+		row = curr:fetch({}, "a")
+	end
+	curr:close()
+	return res
+end
+
+local function get_current_project()
+	local cwd = vim.loop.cwd() -- gets current working directory
+	local query = [[select * from timetable where filename like ?]]
+	local param = cwd .. "%"
+	env = sqlite3.sqlite3()
+	conn = env:connect(db_path)
+	local curr = conn:execute(query, param)
+	local row = curr:fetch({}, "a")
+	local project_lines = {}
+	while row do
+		table.insert(project_lines, { filename = row.filename, total_time = row.total_time })
+		row = curr:fetch({}, "a")
+	end
+	curr:close()
+	print("The res given is", vim.inspect(project_lines))
+end
+
+function M.open()
+	get_current_project()
+	local buf = vim.api.nvim_create_buf(false, true) -- [listed=false, scratch=true]
+	local opts = {
+		relative = "editor",
+		width = 200,
+		height = 80,
+		row = 5,
+		col = 10,
+		style = "minimal",
+		border = "rounded",
+	}
+	local win = vim.api.nvim_open_win(buf, true, opts)
+	local content_lines = get_db_content()
+	print(vim.inspect(content_lines))
+	local lines = {}
+	for _, dict in ipairs(content_lines) do
+		print(dict.filename, dict.total_time)
+		local format_time_table = M.format_time(dict.total_time)
+		table.insert(
+			lines,
+			string.format(
+				"filename : %stotal_hours : %s, total_minutes: %s, total_seconds: %s",
+				dict.filename,
+				format_time_table.total_hours,
+				format_time_table.total_minutes,
+				format_time_table.total_seconds
+			)
+		)
+	end
+	vim.api.nvim_buf_set_lines(buf, 0, 0, false, lines)
+end
+
 vim.api.nvim_create_user_command("Ta", M.start_tracking, {})
 vim.api.nvim_create_user_command("Tb", M.stop_tracking, {})
+vim.api.nvim_create_user_command("Timekeeper", M.open, {})
 
 vim.api.nvim_create_autocmd("BufLeave", {
 	callback = function()
@@ -109,6 +207,9 @@ vim.api.nvim_create_autocmd("BufEnter", {
 	callback = function()
 		M.start_tracking()
 	end,
+})
+vim.api.nvim_create_autocmd({ "CursorMoved", "InsertEnter" }, {
+	callback = reset_inactivity_timer,
 })
 
 -- require(something) gives the M table
