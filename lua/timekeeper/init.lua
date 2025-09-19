@@ -1,10 +1,10 @@
 local M = {}
-package.cpath = package.cpath
-	.. ";/nix/store/pb55r4xamynlf4n4k15qfxzggm0vx2lc-lua5.2-luasql-sqlite3-2.7.0-1/lib/lua/5.2/?.so"
+-- package.cpath = package.cpath
+-- 	.. ";/nix/store/pb55r4xamynlf4n4k15qfxzggm0vx2lc-lua5.2-luasql-sqlite3-2.7.0-1/lib/lua/5.2/?.so"
 local sqlite3 = require("luasql.sqlite3")
 local env = nil
 local conn = nil
-local db_path = "test.db"
+local db_path = "/home/ash/timekeeper/test.db"
 
 function M.setup(opts)
 	opts = opts or {}
@@ -18,7 +18,6 @@ local saving_interval = 10000
 local idle_mode = false
 -- TODO: add saving current date for statistics
 
-local function find_project(filename) end
 local function turn_idle_mode()
 	print("the idle mode was turned on")
 	idle_mode = true
@@ -40,7 +39,7 @@ function M.load_data_db(filename)
 	local row_ = curr:fetch({}, "a")
 	local res = 0
 	if row_ then
-		print("Data base loaded with total time:", row_.total_time)
+		-- print("Data base loaded with total time:", row_.total_time)
 		res = row_.total_time
 	else
 		print("No entry for", filename)
@@ -75,8 +74,11 @@ end
 
 function M.start_tracking()
 	local filename = vim.api.nvim_buf_get_name(0)
-	if filename == "" then
-		return
+	local unstored_filenames = { "^$", "^oil://" }
+	for _, pattern in ipairs(unstored_filenames) do
+		if filename:match(pattern) then
+			return
+		end
 	end
 	env = sqlite3.sqlite3()
 	conn = env:connect(db_path)
@@ -161,13 +163,14 @@ local function get_current_project()
 	print("The res given is", vim.inspect(project_lines))
 end
 
+vim.api.nvim_set_hl(0, "Header", { fg = "#00ff00", bold = true })
 function M.open()
-	get_current_project()
+	-- get_current_project()
 	local buf = vim.api.nvim_create_buf(false, true) -- [listed=false, scratch=true]
 	local opts = {
 		relative = "editor",
-		width = 200,
-		height = 80,
+		width = 100,
+		height = 30,
 		row = 5,
 		col = 10,
 		style = "minimal",
@@ -175,10 +178,10 @@ function M.open()
 	}
 	local win = vim.api.nvim_open_win(buf, true, opts)
 	local content_lines = get_db_content()
-	print(vim.inspect(content_lines))
+	-- print(vim.inspect(content_lines))
 	local lines = {}
+	table.insert(lines, "All files")
 	for _, dict in ipairs(content_lines) do
-		print(dict.filename, dict.total_time)
 		local format_time_table = M.format_time(dict.total_time)
 		table.insert(
 			lines,
@@ -192,11 +195,14 @@ function M.open()
 		)
 	end
 	vim.api.nvim_buf_set_lines(buf, 0, 0, false, lines)
+	local ns = vim.api.nvim_create_namespace("Timekeeper")
+	vim.api.nvim_buf_add_highlight(buf, ns, "Header", 0, 0, -1)
 end
 
 vim.api.nvim_create_user_command("Ta", M.start_tracking, {})
 vim.api.nvim_create_user_command("Tb", M.stop_tracking, {})
 vim.api.nvim_create_user_command("Timekeeper", M.open, {})
+-- TODO: tab like mechanism for headers
 
 vim.api.nvim_create_autocmd("BufLeave", {
 	callback = function()
