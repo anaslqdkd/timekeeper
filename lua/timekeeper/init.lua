@@ -1,6 +1,4 @@
 local M = {}
--- package.cpath = package.cpath
--- 	.. ";/nix/store/pb55r4xamynlf4n4k15qfxzggm0vx2lc-lua5.2-luasql-sqlite3-2.7.0-1/lib/lua/5.2/?.so"
 local sqlite3 = require("luasql.sqlite3")
 local env = nil
 local conn = nil
@@ -160,7 +158,7 @@ local function get_current_project()
 		row = curr:fetch({}, "a")
 	end
 	curr:close()
-	print("The res given is", vim.inspect(project_lines))
+	return project_lines
 end
 
 vim.api.nvim_set_hl(0, "Header", { fg = "#00ff00", bold = true })
@@ -181,12 +179,30 @@ function M.open()
 	-- print(vim.inspect(content_lines))
 	local lines = {}
 	table.insert(lines, "All files")
-	for _, dict in ipairs(content_lines) do
+	local lines_nb = 1
+	for i, dict in ipairs(content_lines) do
 		local format_time_table = M.format_time(dict.total_time)
 		table.insert(
 			lines,
 			string.format(
-				"filename : %stotal_hours : %s, total_minutes: %s, total_seconds: %s",
+				"%s   %s:%s:%s",
+				dict.filename,
+				format_time_table.total_hours,
+				format_time_table.total_minutes,
+				format_time_table.total_seconds
+			)
+		)
+		lines_nb = i
+	end
+	local current_project_lines = get_current_project()
+	table.insert(lines, "Current project files")
+	lines_nb = lines_nb + 1
+	for _, dict in ipairs(current_project_lines) do
+		local format_time_table = M.format_time(dict.total_time)
+		table.insert(
+			lines,
+			string.format(
+				"%s   %s:%s:%s",
 				dict.filename,
 				format_time_table.total_hours,
 				format_time_table.total_minutes,
@@ -196,6 +212,7 @@ function M.open()
 	end
 	vim.api.nvim_buf_set_lines(buf, 0, 0, false, lines)
 	local ns = vim.api.nvim_create_namespace("Timekeeper")
+	vim.api.nvim_buf_add_highlight(buf, ns, "Header", lines_nb, 0, -1)
 	vim.api.nvim_buf_add_highlight(buf, ns, "Header", 0, 0, -1)
 end
 
@@ -219,4 +236,10 @@ vim.api.nvim_create_autocmd({ "CursorMoved", "InsertEnter" }, {
 })
 
 -- require(something) gives the M table
+-- TODO: see for the tests
+-- TODO: sort by most time spend etc
+-- TODO: total time per project, -> leaderboard
+-- TODO: display time spend in the statusline, tabline etc
+-- id, filepath, filetype, session_id, start_time, end_time, duration, tags (for
+-- filtering)
 return M
